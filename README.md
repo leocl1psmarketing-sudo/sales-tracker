@@ -36,11 +36,11 @@ to your new server. Example in Lua (FiveM server-side):
 ```lua
 -- Existing Discord webhook send (keep as-is, or remove if you set
 -- DISCORD_WEBHOOK_URL on the server and let it forward for you)
-local discordWebhook = "https://discord.com/api/webhooks/1530474064395632720/hl92czX0robKCMdBGxGTGG71yZbSJo__OkC_w-aUMth1P_-egFdm0oSe8fBd94DXUEVW"
+local discordWebhook = "YOUR_DISCORD_WEBHOOK_URL"
 
 -- New: send to your tracker
 local trackerUrl = "sales-tracker-production-c832.up.railway.app"
-local apiKey = "321123" -- must match API_KEY you set in Railway
+local apiKey = "YOUR_API_KE" -- must match API_KEY you set in Railway
 
 PerformHttpRequest(trackerUrl, function(err, text, headers) end, 'POST',
   json.encode({
