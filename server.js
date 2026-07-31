@@ -18,6 +18,10 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';
 // sales to your endpoint. Set this in your FiveM script too.
 const API_KEY = process.env.API_KEY || 'change-this-secret';
 
+// Password owners use to unlock the Owner tab in the dashboard (end the
+// week, view past weeks' history). Set this in Railway's Variables tab.
+const OWNER_PASSWORD = process.env.OWNER_PASSWORD || 'change-this-owner-password';
+
 // ---- DATABASE ----
 // If you've attached a Railway Volume, set DB_PATH to its mount path
 // (e.g. /app/data) so the database survives redeploys. Falls back to
@@ -33,12 +37,107 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     item TEXT NOT NULL,
     price REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    archived_week_id INTEGER DEFAULT NULL
+  )
+`);
+
+// Migration: add archived_week_id to older databases that don't have it yet
+const salesColumns = db.prepare("PRAGMA table_info(sales)").all().map(c => c.name);
+if (!salesColumns.includes('archived_week_id')) {
+  db.exec('ALTER TABLE sales ADD COLUMN archived_week_id INTEGER DEFAULT NULL');
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS weekly_archives (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    week_start TEXT NOT NULL,
+    week_end TEXT NOT NULL,
+    total_revenue REAL NOT NULL,
+    total_sales INTEGER NOT NULL,
+    best_seller_item TEXT,
+    best_seller_revenue REAL,
+    stats_json TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )
 `);
 
 const insertSale = db.prepare('INSERT INTO sales (item, price) VALUES (?, ?)');
-const getAllSales = db.prepare('SELECT * FROM sales ORDER BY created_at ASC');
+const getCurrentSales = db.prepare('SELECT * FROM sales WHERE archived_week_id IS NULL ORDER BY created_at ASC');
+const archiveCurrentSales = db.prepare('UPDATE sales SET archived_week_id = ? WHERE archived_week_id IS NULL');
+const insertWeeklyArchive = db.prepare(`
+  INSERT INTO weekly_archives (week_start, week_end, total_revenue, total_sales, best_seller_item, best_seller_revenue, stats_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+`);
+const getAllWeeklyArchives = db.prepare('SELECT id, week_start, week_end, total_revenue, total_sales, best_seller_item, best_seller_revenue FROM weekly_archives ORDER BY week_end DESC');
+const getWeeklyArchiveById = db.prepare('SELECT * FROM weekly_archives WHERE id = ?');
+
+// Computes the same shape of stats used by the dashboard (revenue by day,
+// by item, and top sellers by sell-through velocity) from any array of
+// sale rows. Shared between the live dashboard and the "end week" snapshot.
+function calcStats(sales, isCurrent = true) {
+  const totalRevenue = sales.reduce((sum, s) => sum + s.price, 0);
+  const totalSales = sales.length;
+
+  const byDay = {};
+  for (const s of sales) {
+    const day = s.created_at.split(' ')[0];
+    byDay[day] = (byDay[day] || 0) + s.price;
+  }
+
+  const byItem = {};
+  for (const s of sales) {
+    byItem[s.item] = (byItem[s.item] || 0) + s.price;
+  }
+
+  const itemStats = {};
+  const now = new Date();
+
+  for (const s of sales) {
+    if (!itemStats[s.item]) {
+      itemStats[s.item] = {
+        item: s.item,
+        unitsSold: 0,
+        revenue: 0,
+        firstSale: s.created_at,
+        lastSale: s.created_at
+      };
+    }
+    const stat = itemStats[s.item];
+    stat.unitsSold += 1;
+    stat.revenue += s.price;
+    if (s.created_at < stat.firstSale) stat.firstSale = s.created_at;
+    if (s.created_at > stat.lastSale) stat.lastSale = s.created_at;
+  }
+
+  const topSellers = Object.values(itemStats).map(stat => {
+    const firstSaleDate = new Date(stat.firstSale + 'Z');
+    const lastSaleDate = new Date(stat.lastSale + 'Z');
+    const windowEnd = isCurrent ? now : lastSaleDate;
+    const hoursActive = Math.max((windowEnd - firstSaleDate) / (1000 * 60 * 60), 1);
+    const velocityPerDay = stat.unitsSold / (hoursActive / 24);
+    const avgHoursBetweenSales = stat.unitsSold > 1 ? hoursActive / (stat.unitsSold - 1) : hoursActive;
+
+    return {
+      item: stat.item,
+      unitsSold: stat.unitsSold,
+      revenue: stat.revenue,
+      velocityPerDay: Math.round(velocityPerDay * 100) / 100,
+      avgHoursBetweenSales: Math.round(avgHoursBetweenSales * 10) / 10
+    };
+  }).sort((a, b) => b.velocityPerDay - a.velocityPerDay);
+
+  return { totalRevenue, totalSales, byDay, byItem, topSellers };
+}
+
+// Simple owner auth check — pass the password as an x-owner-password header
+function requireOwner(req, res, next) {
+  const pw = req.header('x-owner-password');
+  if (pw !== OWNER_PASSWORD) {
+    return res.status(401).json({ error: 'Invalid owner password' });
+  }
+  next();
+}
 
 // ---- ROUTES ----
 
@@ -81,75 +180,78 @@ app.post('/sale', async (req, res) => {
   res.json({ success: true });
 });
 
-// Returns raw sales data for the dashboard
+// Returns raw sales data for the dashboard (this week's unarchived sales only)
 app.get('/api/sales', (req, res) => {
-  res.json(getAllSales.all());
+  res.json(getCurrentSales.all());
 });
 
-// Returns aggregated stats for the dashboard
+// Returns aggregated stats for the dashboard (this week's unarchived sales only)
 app.get('/api/stats', (req, res) => {
-  const sales = getAllSales.all();
+  const sales = getCurrentSales.all();
+  res.json(calcStats(sales, true));
+});
 
-  const totalRevenue = sales.reduce((sum, s) => sum + s.price, 0);
-  const totalSales = sales.length;
+// ---- OWNER ROUTES ----
 
-  // Revenue grouped by day
-  const byDay = {};
-  for (const s of sales) {
-    const day = s.created_at.split(' ')[0]; // YYYY-MM-DD
-    byDay[day] = (byDay[day] || 0) + s.price;
+// Simple check to let the frontend verify a password without doing anything
+app.post('/api/owner-login', requireOwner, (req, res) => {
+  res.json({ success: true });
+});
+
+// Ends the current week: snapshots stats into permanent history, then
+// marks all current sales as archived so the live dashboard resets to zero.
+app.post('/api/end-week', requireOwner, (req, res) => {
+  const sales = getCurrentSales.all();
+
+  if (sales.length === 0) {
+    return res.status(400).json({ error: 'No sales recorded yet this week — nothing to archive.' });
   }
 
-  // Revenue grouped by item
-  const byItem = {};
-  for (const s of sales) {
-    byItem[s.item] = (byItem[s.item] || 0) + s.price;
-  }
+  const stats = calcStats(sales, false);
+  const weekStart = sales[0].created_at;
+  const weekEnd = sales[sales.length - 1].created_at;
 
-  // --- Top sellers by velocity (how fast each item is selling) ---
-  // For each item: count units, revenue, and how many days it's been
-  // on sale for (from first sale to now), then units/day = velocity.
-  const itemStats = {};
-  const now = new Date();
+  const bestSeller = stats.topSellers.slice().sort((a, b) => b.revenue - a.revenue)[0] || null;
 
-  for (const s of sales) {
-    if (!itemStats[s.item]) {
-      itemStats[s.item] = {
-        item: s.item,
-        unitsSold: 0,
-        revenue: 0,
-        firstSale: s.created_at,
-        lastSale: s.created_at
-      };
-    }
-    const stat = itemStats[s.item];
-    stat.unitsSold += 1;
-    stat.revenue += s.price;
-    if (s.created_at < stat.firstSale) stat.firstSale = s.created_at;
-    if (s.created_at > stat.lastSale) stat.lastSale = s.created_at;
-  }
+  const result = insertWeeklyArchive.run(
+    weekStart,
+    weekEnd,
+    stats.totalRevenue,
+    stats.totalSales,
+    bestSeller ? bestSeller.item : null,
+    bestSeller ? bestSeller.revenue : null,
+    JSON.stringify(stats)
+  );
 
-  const topSellers = Object.values(itemStats).map(stat => {
-    const firstSaleDate = new Date(stat.firstSale + 'Z');
-    const hoursActive = Math.max((now - firstSaleDate) / (1000 * 60 * 60), 1); // min 1 hour to avoid divide-by-zero
-    const velocityPerDay = stat.unitsSold / (hoursActive / 24);
-    const avgHoursBetweenSales = stat.unitsSold > 1 ? hoursActive / (stat.unitsSold - 1) : hoursActive;
-
-    return {
-      item: stat.item,
-      unitsSold: stat.unitsSold,
-      revenue: stat.revenue,
-      velocityPerDay: Math.round(velocityPerDay * 100) / 100,
-      avgHoursBetweenSales: Math.round(avgHoursBetweenSales * 10) / 10
-    };
-  }).sort((a, b) => b.velocityPerDay - a.velocityPerDay);
+  archiveCurrentSales.run(result.lastInsertRowid);
 
   res.json({
-    totalRevenue,
-    totalSales,
-    byDay,
-    byItem,
-    topSellers
+    success: true,
+    weekId: result.lastInsertRowid,
+    summary: {
+      weekStart,
+      weekEnd,
+      totalRevenue: stats.totalRevenue,
+      totalSales: stats.totalSales,
+      bestSeller
+    }
+  });
+});
+
+// Lists all past archived weeks (summary only)
+app.get('/api/weeks', requireOwner, (req, res) => {
+  res.json(getAllWeeklyArchives.all());
+});
+
+// Full detail for one archived week (byDay, byItem, full topSellers list)
+app.get('/api/weeks/:id', requireOwner, (req, res) => {
+  const week = getWeeklyArchiveById.get(req.params.id);
+  if (!week) {
+    return res.status(404).json({ error: 'Week not found' });
+  }
+  res.json({
+    ...week,
+    stats: JSON.parse(week.stats_json)
   });
 });
 
