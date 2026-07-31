@@ -315,6 +315,28 @@
   .selected-stat-emoji { font-size: 40px; }
   .selected-stat-name { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
   .selected-stat-numbers { color: var(--muted); font-size: 13px; }
+
+  .price-edit-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .price-edit-row:last-child { border-bottom: none; }
+  .price-edit-emoji { font-size: 20px; width: 28px; text-align: center; }
+  .price-edit-name { flex: 1; font-size: 14px; }
+  .price-edit-input {
+    width: 90px;
+    background: var(--glass-strong);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 14px;
+    text-align: right;
+  }
+  .price-edit-input:focus { outline: none; border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -400,6 +422,16 @@
         </div>
       </div>
 
+      <div class="owner-card" style="margin-bottom:16px;">
+        <h2>Edit Item Prices</h2>
+        <p style="color:var(--muted); font-size:13px; margin:0 0 14px;">
+          These prices are just the reference labels shown on the Items tab — editing them here doesn't change anything else on the dashboard.
+        </p>
+        <div id="priceEditList"><div class="empty">Loading...</div></div>
+        <button class="btn" style="margin-top:14px;" onclick="savePrices()">Save Prices</button>
+        <div id="savePricesMessage" style="margin-top:10px;"></div>
+      </div>
+
       <div class="owner-card">
         <h2>Past Weeks</h2>
         <div id="pastWeeksList"><div class="empty">Loading...</div></div>
@@ -415,32 +447,65 @@ let ownerPassword = sessionStorage.getItem('ownerPassword') || null;
 const weekDataCache = {};
 let currentWeekTopSellers = [];
 let selectedItemName = null;
+let ITEM_CATALOG = []; // loaded from /api/catalog on page load
 
-// Your kiosk's item catalog. "price" here is just a reference label shown
-// on the card — it isn't used in any calculation, so if in-game prices
-// change, this won't affect the actual sales numbers, just the label.
-// Edit this list any time to match your kiosk (add/remove/rename items).
-const ITEM_CATALOG = [
-  { name: 'Jerry Can', emoji: '🛢️', price: 100 },
-  { name: 'Two Stroke', emoji: '⛽', price: 75 },
-  { name: 'Water', emoji: '💧', price: 5 },
-  { name: 'Baggies (Empty)', emoji: '🛍️', price: 35 },
-  { name: 'Coffee (Small)', emoji: '☕', price: 40 },
-  { name: 'First Aid Bandage', emoji: '🩹', price: 100 },
-  { name: 'Frost Rush', emoji: '🥤', price: 80 },
-  { name: 'Lucky Scratch', emoji: '🎟️', price: 500 },
-  { name: 'Flaming Crunch', emoji: '🌶️', price: 75 },
-  { name: 'Repair Kit (Sml)', emoji: '🧰', price: 300 },
-  { name: 'Rolling Paper', emoji: '🚬', price: 5 },
-  { name: 'Lighter', emoji: '🔥', price: 20 },
-  { name: 'Small Vape', emoji: '💨', price: 300 },
-  { name: 'Sandwich', emoji: '🥪', price: 5 },
-  { name: 'Large Vape', emoji: '💨', price: 600 },
-  { name: 'Doughnut (Choc)', emoji: '🍩', price: 30 },
-  { name: 'Cigar', emoji: '🚬', price: 20 },
-  { name: 'Cola', emoji: '🥤', price: 5 },
-  { name: 'Cigarette', emoji: '🚬', price: 10 }
-];
+async function loadCatalog() {
+  const res = await fetch('/api/catalog');
+  ITEM_CATALOG = await res.json();
+  if (document.getElementById('itemsView').style.display !== 'none') {
+    renderItemsGrid();
+  }
+  if (document.getElementById('ownerPanel')?.style.display !== 'none') {
+    renderPriceEditList();
+  }
+}
+loadCatalog();
+
+function renderPriceEditList() {
+  const listEl = document.getElementById('priceEditList');
+  if (!ITEM_CATALOG || ITEM_CATALOG.length === 0) {
+    listEl.innerHTML = '<div class="empty">Loading catalog...</div>';
+    return;
+  }
+
+  listEl.innerHTML = ITEM_CATALOG.map(item => `
+    <div class="price-edit-row">
+      <div class="price-edit-emoji">${item.emoji}</div>
+      <div class="price-edit-name">${item.name}</div>
+      <input type="number" step="0.01" min="0" class="price-edit-input" id="price-input-${item.name.replace(/[^a-zA-Z0-9]/g, '_')}" value="${item.price}">
+    </div>
+  `).join('');
+}
+
+async function savePrices() {
+  const prices = {};
+  ITEM_CATALOG.forEach(item => {
+    const input = document.getElementById(`price-input-${item.name.replace(/[^a-zA-Z0-9]/g, '_')}`);
+    if (input) prices[item.name] = parseFloat(input.value) || 0;
+  });
+
+  const msgEl = document.getElementById('savePricesMessage');
+  msgEl.textContent = '';
+
+  try {
+    const res = await fetch('/api/catalog/prices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-owner-password': ownerPassword },
+      body: JSON.stringify({ prices })
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      msgEl.innerHTML = `<div class="error-text">${data.error || 'Something went wrong.'}</div>`;
+      return;
+    }
+
+    ITEM_CATALOG = data.catalog;
+    msgEl.innerHTML = '<div style="color:var(--accent-light); font-size:12px;">Prices saved.</div>';
+  } catch (err) {
+    msgEl.innerHTML = '<div class="error-text">Could not reach server.</div>';
+  }
+}
 
 function renderItemsGrid() {
   const grid = document.getElementById('itemsGrid');
@@ -500,6 +565,7 @@ function switchTab(tab) {
       document.getElementById('ownerPanel').style.display = 'block';
       loadPastWeeks();
       renderCurrentWeekSellers('revenue');
+      renderPriceEditList();
     } else {
       document.getElementById('ownerLoginBox').style.display = 'block';
       document.getElementById('ownerPanel').style.display = 'none';
