@@ -20,15 +20,54 @@ existing Discord webhook too, so you don't lose your current notifications.
    - `API_KEY` — any secret string you make up, e.g. `mybiz-2026-secret`
    - `DISCORD_WEBHOOK_URL` — your existing Discord webhook URL (optional, only
      if you want sales still posted to Discord from this server)
+   - `OWNER_PASSWORD` — a password only you (the business owner) know, used
+     to unlock the Owner tab on the dashboard
 4. Railway will give you a public URL like `https://your-app.up.railway.app`
 5. Visit that URL in your browser — you'll see the dashboard (empty until
    sales start coming in).
-6. **Important:** Railway's filesystem resets on redeploy by default. Add a
-   **Volume** (Railway → your service → Settings → Volumes) mounted at
-   `/app` (or wherever you deploy the app) so `sales.db` persists between
-   deploys/restarts.
+6. **Important:** Railway's filesystem resets on redeploy by default. Attach
+   a **Volume** so `sales.db` persists between deploys/restarts:
+   - In your Railway project, right-click your service's tile (or click its
+     **⋯** menu) → **Attach Volume**
+   - Set **Mount Path** to `/app/data`
+   - Save (this triggers a redeploy)
+   - Then add one more variable in the **Variables** tab:
+     - Name: `DB_PATH` → Value: `/app/data`
+   - This tells the server to save `sales.db` inside the mounted volume
+     instead of the app folder, so it survives future deploys.
 
-## 2. Point your FiveM script at it
+## 2. Set up the Discord bot (if you can't edit the FiveM script)
+
+If you're just a player and can't modify the server's Lua scripts, this
+project can instead run a small Discord bot that watches your Kiosk sale-log
+channel directly and logs each sale automatically — no script access needed.
+
+1. Go to https://discord.com/developers/applications → **New Application**
+2. Click **Bot** in the sidebar → **Reset Token** → copy the token
+3. Still on the Bot page, enable **Message Content Intent** under
+   Privileged Gateway Intents
+4. Go to **OAuth2 → URL Generator** → check scope **bot** → under
+   permissions check **View Channels** and **Read Message History** →
+   copy the generated URL, open it, and add the bot to your server
+5. In Discord, enable Developer Mode (User Settings → Advanced), then
+   right-click the channel with the sale messages → **Copy Channel ID**
+6. In Railway's **Variables** tab, add:
+   - `DISCORD_BOT_TOKEN` — the token from step 2
+   - `DISCORD_CHANNEL_ID` — the channel ID from step 5
+
+The bot parses lines formatted like `Item Name x1 ($100/unit)` from the
+"Items" field of each sale embed. If your kiosk's message format looks
+different from that, paste an example message and the parsing can be
+adjusted.
+
+**Never paste your bot token anywhere except Railway's Variables tab** —
+not in chat, not in a GitHub file. If a token is ever exposed, reset it
+immediately from the Discord Developer Portal.
+
+## 3. (Alternative) Point your FiveM script at it directly
+
+If you *do* have access to the FiveM script instead, you can skip the bot
+entirely and send sales straight from the script:
 
 Wherever your script currently sends a sale to Discord, add a second request
 to your new server. Example in Lua (FiveM server-side):
@@ -36,11 +75,11 @@ to your new server. Example in Lua (FiveM server-side):
 ```lua
 -- Existing Discord webhook send (keep as-is, or remove if you set
 -- DISCORD_WEBHOOK_URL on the server and let it forward for you)
-local discordWebhook = "YOUR_DISCORD_WEBHOOK_URL"
+local discordWebhook = "https://discord.com/api/webhooks/..."
 
 -- New: send to your tracker
-local trackerUrl = "sales-tracker-production-c832.up.railway.app"
-local apiKey = "YOUR_API_KE" -- must match API_KEY you set in Railway
+local trackerUrl = "https://your-app.up.railway.app/sale"
+local apiKey = "mybiz-2026-secret" -- must match API_KEY you set in Railway
 
 PerformHttpRequest(trackerUrl, function(err, text, headers) end, 'POST',
   json.encode({
@@ -80,6 +119,24 @@ now, divides units sold by that time window, and ranks items by units/day
 1 unit every 2 days, regardless of total revenue — so this table answers
 "what's flying off the shelves" rather than "what makes the most money"
 (that's what the Revenue By Item chart is for).
+
+## Owner Tab — ending the week & viewing history
+
+Click the **Owner** tab (top right of the dashboard) and enter your
+`OWNER_PASSWORD` to unlock it. From there:
+
+- **End This Week & Save** — takes a permanent snapshot of the current
+  week's total revenue, total sales, and best sellers, saves it to history,
+  then resets the live dashboard to zero so you can start tracking the next
+  week fresh. Past data is never deleted — just moved into the weekly
+  history list.
+- **Past Weeks** — a list of every week you've ended, showing total revenue,
+  total sales, and the best-selling item for that week. Click any week to
+  expand its top 5 sellers.
+
+The Owner tab uses your `OWNER_PASSWORD` (separate from `API_KEY`, which is
+only for the FiveM/bot sale-logging endpoint). Only share the owner password
+with people who should be able to close out weeks and view revenue history.
 
 ## Local testing (optional)
 
