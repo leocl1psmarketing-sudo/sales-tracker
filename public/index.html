@@ -276,6 +276,45 @@
     display: none;
   }
   .week-detail.open { display: block; }
+
+  /* Items tab */
+  .items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+  }
+  .item-card {
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 18px 14px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .item-card:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+  .item-card.selected {
+    border-color: rgba(79,142,247,0.5);
+    background: rgba(79,142,247,0.08);
+    box-shadow: 0 0 20px rgba(79,142,247,0.15);
+  }
+  .item-emoji { font-size: 34px; margin-bottom: 10px; }
+  .item-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .item-price { color: var(--muted); font-size: 11px; }
+  .selected-stat-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--glass-strong);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 18px;
+  }
+  .selected-stat-emoji { font-size: 40px; }
+  .selected-stat-name { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+  .selected-stat-numbers { color: var(--muted); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -289,6 +328,7 @@
     </div>
     <div class="tabs">
       <button class="tab-btn active" id="tabDashboardBtn" onclick="switchTab('dashboard')">Dashboard</button>
+      <button class="tab-btn" id="tabItemsBtn" onclick="switchTab('items')">Items</button>
       <button class="tab-btn" id="tabOwnerBtn" onclick="switchTab('owner')">Owner</button>
     </div>
   </div>
@@ -313,6 +353,17 @@
       <h2>🔥 Top Sellers — Fastest Moving Stock</h2>
       <div id="topSellersList"></div>
     </div>
+  </div>
+
+  <div id="itemsView" style="display:none;">
+    <div class="owner-card" style="margin-bottom:16px;">
+      <h2>📦 Item Sales Lookup</h2>
+      <p style="color:var(--muted); font-size:13px; margin:0 0 4px;">
+        Click any item below to see how many have sold this week.
+      </p>
+      <div id="itemSelectedStat" style="margin-top:14px;"></div>
+    </div>
+    <div class="items-grid" id="itemsGrid"></div>
   </div>
 
   <div id="ownerView" style="display:none;">
@@ -363,12 +414,85 @@
 let ownerPassword = sessionStorage.getItem('ownerPassword') || null;
 const weekDataCache = {};
 let currentWeekTopSellers = [];
+let selectedItemName = null;
+
+// Your kiosk's item catalog. "price" here is just a reference label shown
+// on the card — it isn't used in any calculation, so if in-game prices
+// change, this won't affect the actual sales numbers, just the label.
+// Edit this list any time to match your kiosk (add/remove/rename items).
+const ITEM_CATALOG = [
+  { name: 'Jerry Can', emoji: '🛢️', price: 100 },
+  { name: 'Two Stroke', emoji: '⛽', price: 75 },
+  { name: 'Water', emoji: '💧', price: 5 },
+  { name: 'Baggies (Empty)', emoji: '🛍️', price: 35 },
+  { name: 'Coffee (Small)', emoji: '☕', price: 40 },
+  { name: 'First Aid Bandage', emoji: '🩹', price: 100 },
+  { name: 'Frost Rush', emoji: '🥤', price: 80 },
+  { name: 'Lucky Scratch', emoji: '🎟️', price: 500 },
+  { name: 'Flaming Crunch', emoji: '🌶️', price: 75 },
+  { name: 'Repair Kit (Sml)', emoji: '🧰', price: 300 },
+  { name: 'Rolling Paper', emoji: '🚬', price: 5 },
+  { name: 'Lighter', emoji: '🔥', price: 20 },
+  { name: 'Small Vape', emoji: '💨', price: 300 },
+  { name: 'Sandwich', emoji: '🥪', price: 5 },
+  { name: 'Large Vape', emoji: '💨', price: 600 },
+  { name: 'Doughnut (Choc)', emoji: '🍩', price: 30 },
+  { name: 'Cigar', emoji: '🚬', price: 20 },
+  { name: 'Cola', emoji: '🥤', price: 5 },
+  { name: 'Cigarette', emoji: '🚬', price: 10 }
+];
+
+function renderItemsGrid() {
+  const grid = document.getElementById('itemsGrid');
+  grid.innerHTML = ITEM_CATALOG.map(catalogItem => `
+    <div class="item-card ${selectedItemName === catalogItem.name ? 'selected' : ''}" onclick="selectItem('${catalogItem.name.replace(/'/g, "\\'")}')">
+      <div class="item-emoji">${catalogItem.emoji}</div>
+      <div class="item-name">${catalogItem.name}</div>
+      <div class="item-price">$${catalogItem.price.toFixed(2)}</div>
+    </div>
+  `).join('');
+
+  if (selectedItemName) {
+    renderSelectedItemStat();
+  }
+}
+
+function selectItem(itemName) {
+  selectedItemName = itemName;
+  renderItemsGrid();
+  renderSelectedItemStat();
+}
+
+function renderSelectedItemStat() {
+  const statEl = document.getElementById('itemSelectedStat');
+  const catalogItem = ITEM_CATALOG.find(i => i.name === selectedItemName);
+  const soldData = currentWeekTopSellers.find(s => s.item === selectedItemName);
+
+  const unitsSold = soldData ? soldData.unitsSold : 0;
+  const revenue = soldData ? soldData.revenue : 0;
+
+  statEl.innerHTML = `
+    <div class="selected-stat-card">
+      <div class="selected-stat-emoji">${catalogItem ? catalogItem.emoji : '📦'}</div>
+      <div>
+        <div class="selected-stat-name">${selectedItemName}</div>
+        <div class="selected-stat-numbers">${unitsSold} sold this week &middot; $${revenue.toFixed(2)} revenue</div>
+      </div>
+    </div>
+  `;
+}
 
 function switchTab(tab) {
   document.getElementById('dashboardView').style.display = tab === 'dashboard' ? 'block' : 'none';
+  document.getElementById('itemsView').style.display = tab === 'items' ? 'block' : 'none';
   document.getElementById('ownerView').style.display = tab === 'owner' ? 'block' : 'none';
   document.getElementById('tabDashboardBtn').classList.toggle('active', tab === 'dashboard');
+  document.getElementById('tabItemsBtn').classList.toggle('active', tab === 'items');
   document.getElementById('tabOwnerBtn').classList.toggle('active', tab === 'owner');
+
+  if (tab === 'items') {
+    renderItemsGrid();
+  }
   
   if (tab === 'owner') {
     if (ownerPassword) {
@@ -417,6 +541,11 @@ async function loadDashboard() {
   if (currentListEl) {
     const activeSort = document.getElementById('filter-qty-current')?.classList.contains('active') ? 'units' : 'revenue';
     renderCurrentWeekSellers(activeSort);
+  }
+
+  // Keep the Items tab's selected item stat in sync with live data
+  if (selectedItemName) {
+    renderSelectedItemStat();
   }
 }
 
