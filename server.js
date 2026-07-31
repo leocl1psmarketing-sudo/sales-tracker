@@ -2,6 +2,7 @@ const express = require('express');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fetch = require('node-fetch');
+const crypto = require('crypto');
 
 const app = express();
 app.use(express.json());
@@ -38,14 +39,22 @@ db.exec(`
     item TEXT NOT NULL,
     price REAL NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    archived_week_id INTEGER DEFAULT NULL
+    archived_week_id INTEGER DEFAULT NULL,
+    order_id TEXT
   )
 `);
 
-// Migration: add archived_week_id to older databases that don't have it yet
+// Migration: add columns to older databases that don't have them yet
 const salesColumns = db.prepare("PRAGMA table_info(sales)").all().map(c => c.name);
 if (!salesColumns.includes('archived_week_id')) {
   db.exec('ALTER TABLE sales ADD COLUMN archived_week_id INTEGER DEFAULT NULL');
+}
+if (!salesColumns.includes('order_id')) {
+  db.exec('ALTER TABLE sales ADD COLUMN order_id TEXT');
+  // Give any pre-existing rows their own unique order id so they each still
+  // count as one "sale" for historical totals, since we don't know how they
+  // were originally grouped.
+  db.exec("UPDATE sales SET order_id = 'legacy-' || id WHERE order_id IS NULL");
 }
 
 db.exec(`
@@ -55,6 +64,7 @@ db.exec(`
     week_end TEXT NOT NULL,
     total_revenue REAL NOT NULL,
     total_sales INTEGER NOT NULL,
+    total_orders INTEGER NOT NULL DEFAULT 0,
     best_seller_item TEXT,
     best_seller_revenue REAL,
     stats_json TEXT NOT NULL,
@@ -62,14 +72,19 @@ db.exec(`
   )
 `);
 
-const insertSale = db.prepare('INSERT INTO sales (item, price) VALUES (?, ?)');
+const archiveColumns = db.prepare("PRAGMA table_info(weekly_archives)").all().map(c => c.name);
+if (!archiveColumns.includes('total_orders')) {
+  db.exec('ALTER TABLE weekly_archives ADD COLUMN total_orders INTEGER NOT NULL DEFAULT 0');
+}
+
+const insertSale = db.prepare('INSERT INTO sales (item, price, order_id) VALUES (?, ?, ?)');
 const getCurrentSales = db.prepare('SELECT * FROM sales WHERE archived_week_id IS NULL ORDER BY created_at ASC');
 const archiveCurrentSales = db.prepare('UPDATE sales SET archived_week_id = ? WHERE archived_week_id IS NULL');
 const insertWeeklyArchive = db.prepare(`
-  INSERT INTO weekly_archives (week_start, week_end, total_revenue, total_sales, best_seller_item, best_seller_revenue, stats_json)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO weekly_archives (week_start, week_end, total_revenue, total_sales, total_orders, best_seller_item, best_seller_revenue, stats_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `);
-const getAllWeeklyArchives = db.prepare('SELECT id, week_start, week_end, total_revenue, total_sales, best_seller_item, best_seller_revenue FROM weekly_archives ORDER BY week_end DESC');
+const getAllWeeklyArchives = db.prepare('SELECT id, week_start, week_end, total_revenue, total_sales, total_orders, best_seller_item, best_seller_revenue FROM weekly_archives ORDER BY week_end DESC');
 const getWeeklyArchiveById = db.prepare('SELECT * FROM weekly_archives WHERE id = ?');
 
 // Computes the same shape of stats used by the dashboard (revenue by day,
@@ -77,7 +92,8 @@ const getWeeklyArchiveById = db.prepare('SELECT * FROM weekly_archives WHERE id 
 // sale rows. Shared between the live dashboard and the "end week" snapshot.
 function calcStats(sales, isCurrent = true) {
   const totalRevenue = sales.reduce((sum, s) => sum + s.price, 0);
-  const totalSales = sales.length;
+  const totalUnits = sales.length;
+  const totalOrders = new Set(sales.map(s => s.order_id)).size;
 
   const byDay = {};
   for (const s of sales) {
@@ -127,7 +143,7 @@ function calcStats(sales, isCurrent = true) {
     };
   }).sort((a, b) => b.velocityPerDay - a.velocityPerDay);
 
-  return { totalRevenue, totalSales, byDay, byItem, topSellers };
+  return { totalRevenue, totalUnits, totalOrders, byDay, byItem, topSellers };
 }
 
 // Simple owner auth check — pass the password as an x-owner-password header
@@ -154,13 +170,20 @@ app.post('/sale', async (req, res) => {
     return res.status(401).json({ error: 'Invalid API key' });
   }
 
-  const { item, price } = req.body;
+  const { item, price, quantity } = req.body;
 
   if (!item || typeof price !== 'number') {
-    return res.status(400).json({ error: 'Expected { item: string, price: number }' });
+    return res.status(400).json({ error: 'Expected { item: string, price: number, quantity?: number }' });
   }
 
-  insertSale.run(item, price);
+  // One order_id per request — this is what "Total Sales" counts, i.e. one
+  // checkout/transaction, regardless of how many units were in it.
+  const orderId = crypto.randomUUID();
+  const qty = (quantity && typeof quantity === 'number' && quantity > 0) ? quantity : 1;
+
+  for (let i = 0; i < qty; i++) {
+    insertSale.run(item, price, orderId);
+  }
 
   // Optionally forward to Discord so you keep your existing notifications
   if (DISCORD_WEBHOOK_URL) {
@@ -217,7 +240,8 @@ app.post('/api/end-week', requireOwner, (req, res) => {
     weekStart,
     weekEnd,
     stats.totalRevenue,
-    stats.totalSales,
+    stats.totalUnits,
+    stats.totalOrders,
     bestSeller ? bestSeller.item : null,
     bestSeller ? bestSeller.revenue : null,
     JSON.stringify(stats)
@@ -232,7 +256,8 @@ app.post('/api/end-week', requireOwner, (req, res) => {
       weekStart,
       weekEnd,
       totalRevenue: stats.totalRevenue,
-      totalSales: stats.totalSales,
+      totalUnits: stats.totalUnits,
+      totalOrders: stats.totalOrders,
       bestSeller
     }
   });
@@ -291,6 +316,10 @@ if (BOT_TOKEN && CHANNEL_ID) {
       return;
     }
 
+    // One order_id per Discord message — a whole kiosk purchase (however
+    // many items it contains) counts as a single "sale" transaction.
+    const orderId = crypto.randomUUID();
+
     for (const embed of message.embeds) {
       console.log(`[DEBUG] Embed title: "${embed.title}", fields: ${embed.fields?.map(f => f.name).join(', ')}`);
 
@@ -315,7 +344,7 @@ if (BOT_TOKEN && CHANNEL_ID) {
 
 // Loop through and insert each unit individually at its unit price
         for (let i = 0; i < quantity; i++) {
-  insertSale.run(itemName, unitPrice);
+  insertSale.run(itemName, unitPrice, orderId);
 }
 
 console.log(`Logged sale from Discord: ${itemName} x${quantity} @ $${unitPrice.toFixed(2)}/unit (Total: $${(quantity * unitPrice).toFixed(2)})`);
