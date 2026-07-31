@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Business Sales Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #08090d;
+    --glass: rgba(255,255,255,0.035);
+    --glass-strong: rgba(255,255,255,0.055);
+    --border: rgba(255,255,255,0.09);
+    --border-strong: rgba(255,255,255,0.14);
+    --text: #f2f3f7;
+    --muted: #83889c;
+    --accent: #4f8ef7;
+    --accent-light: #7db2ff;
+    --accent-glow: rgba(79,142,247,0.45);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  body {
+    padding: 32px;
+    position: relative;
+    overflow-x: hidden;
+  }
+  /* floating particle dots like the reference UI */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      radial-gradient(circle, rgba(255,255,255,0.35) 1px, transparent 1px),
+      radial-gradient(circle, rgba(79,142,247,0.35) 1px, transparent 1px);
+    background-size: 140px 140px, 220px 220px;
+    background-position: 0 0, 60px 90px;
+    opacity: 0.5;
+    z-index: 0;
+  }
+  .page { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 14px 20px;
+    margin-bottom: 24px;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .logo {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: linear-gradient(140deg, var(--accent-light), var(--accent));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 15px;
+    color: #06101f;
+    box-shadow: 0 0 24px var(--accent-glow);
+  }
+  .topbar h1 {
+    font-size: 17px;
+    font-weight: 700;
+    margin: 0;
+  }
+  .topbar .sub {
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .stat-card, .chart-card, .list-card {
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 22px;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .stat-label {
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .stat-value {
+    font-size: 26px;
+    font-weight: 700;
+  }
+
+  .charts-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 850px) {
+    .charts-row { grid-template-columns: 1fr; }
+  }
+  .chart-card h2, .list-card h2 {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 18px;
+  }
+
+  .list-card { margin-bottom: 24px; }
+  .seller-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    background: var(--glass-strong);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    margin-bottom: 10px;
+  }
+  .seller-row:last-child { margin-bottom: 0; }
+  .rank {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: rgba(79,142,247,0.15);
+    border: 1px solid rgba(79,142,247,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent-light);
+    flex-shrink: 0;
+  }
+  .rank.gold { background: rgba(255,200,90,0.15); border-color: rgba(255,200,90,0.45); color: #ffcd6a; }
+  .seller-info { flex: 1; min-width: 0; }
+  .seller-name { font-weight: 600; font-size: 15px; margin-bottom: 2px; }
+  .seller-sub { color: var(--muted); font-size: 12px; }
+  .pill {
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: rgba(79,142,247,0.14);
+    border: 1px solid rgba(79,142,247,0.35);
+    color: var(--accent-light);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: 0 0 16px rgba(79,142,247,0.15);
+  }
+
+  .empty {
+    color: var(--muted);
+    text-align: center;
+    padding: 30px 0;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="topbar">
+    <div class="logo">LC</div>
+    <div>
+      <h1>Business Sales Dashboard</h1>
+      <div class="sub">Live Revenue Tracker</div>
+    </div>
+  </div>
+
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Total Revenue</div>
+      <div class="stat-value" id="totalRevenue">$0.00</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Sales</div>
+      <div class="stat-value" id="totalSales">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Sale Price</div>
+      <div class="stat-value" id="avgSale">$0.00</div>
+    </div>
+  </div>
+
+  <div class="list-card">
+    <h2>🔥 Top Sellers — Fastest Moving Stock</h2>
+    <div id="topSellersList"></div>
+  </div>
+
+  <div class="charts-row">
+    <div class="chart-card">
+      <h2>Revenue Over Time</h2>
+      <canvas id="revenueChart"></canvas>
+    </div>
+    <div class="chart-card">
+      <h2>Revenue By Item</h2>
+      <canvas id="itemChart"></canvas>
+    </div>
+  </div>
+
+</div>
+
+<script>
+async function loadDashboard() {
+  const res = await fetch('/api/stats');
+  const data = await res.json();
+
+  document.getElementById('totalRevenue').textContent = '$' + data.totalRevenue.toFixed(2);
+  document.getElementById('totalSales').textContent = data.totalSales;
+  document.getElementById('avgSale').textContent = '$' + (data.totalSales ? (data.totalRevenue / data.totalSales) : 0).toFixed(2);
+
+  // --- Top sellers list ---
+  const listEl = document.getElementById('topSellersList');
+  listEl.innerHTML = '';
+  if (!data.topSellers || data.topSellers.length === 0) {
+    listEl.innerHTML = '<div class="empty">No sales yet — once items start selling, the fastest movers show up here.</div>';
+  } else {
+    data.topSellers.slice(0, 10).forEach((seller, i) => {
+      const row = document.createElement('div');
+      row.className = 'seller-row';
+      row.innerHTML = `
+        <div class="rank ${i === 0 ? 'gold' : ''}">${i + 1}</div>
+        <div class="seller-info">
+          <div class="seller-name">${seller.item}</div>
+          <div class="seller-sub">${seller.unitsSold} sold &middot; $${seller.revenue.toFixed(2)} revenue &middot; every ${seller.avgHoursBetweenSales}h</div>
+        </div>
+        <div class="pill">${seller.velocityPerDay}/day</div>
+      `;
+      listEl.appendChild(row);
+    });
+  }
+
+  // --- Charts ---
+  const days = Object.keys(data.byDay).sort();
+  const dayValues = days.map(d => data.byDay[d]);
+
+  new Chart(document.getElementById('revenueChart'), {
+    type: 'line',
+    data: {
+      labels: days,
+      datasets: [{
+        label: 'Revenue ($)',
+        data: dayValues,
+        borderColor: '#4f8ef7',
+        backgroundColor: 'rgba(79,142,247,0.15)',
+        pointBackgroundColor: '#7db2ff',
+        tension: 0.35,
+        fill: true
+      }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#83889c' }, grid: { color: 'rgba(255,255,255,0.06)' } },
+        y: { ticks: { color: '#83889c' }, grid: { color: 'rgba(255,255,255,0.06)' } }
+      }
+    }
+  });
+
+  const items = Object.keys(data.byItem);
+  const itemValues = items.map(i => data.byItem[i]);
+
+  new Chart(document.getElementById('itemChart'), {
+    type: 'bar',
+    data: {
+      labels: items,
+      datasets: [{
+        label: 'Revenue ($)',
+        data: itemValues,
+        backgroundColor: '#4f8ef7',
+        borderRadius: 6
+      }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#83889c' }, grid: { color: 'rgba(255,255,255,0.06)' } },
+        y: { ticks: { color: '#83889c' }, grid: { color: 'rgba(255,255,255,0.06)' } }
+      }
+    }
+  });
+}
+
+loadDashboard();
+setInterval(loadDashboard, 30000);
+</script>
+</body>
+</html>
