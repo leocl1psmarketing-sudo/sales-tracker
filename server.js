@@ -19,7 +19,15 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';
 const API_KEY = process.env.API_KEY || 'change-this-secret';
 
 // ---- DATABASE ----
-const db = new Database(path.join(__dirname, 'sales.db'));
+// If you've attached a Railway Volume, set DB_PATH to its mount path
+// (e.g. /app/data) so the database survives redeploys. Falls back to
+// storing it next to the app if no volume is configured yet.
+const fs = require('fs');
+const dbDir = process.env.DB_PATH || __dirname;
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
+const db = new Database(path.join(dbDir, 'sales.db'));
 db.exec(`
   CREATE TABLE IF NOT EXISTS sales (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -149,3 +157,59 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Sales tracker listening on port ${PORT}`);
 });
+
+// ---- DISCORD BOT: watches the Kiosk sale-log channel ----
+// Reads DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID from Railway's Variables
+// tab. If either is missing, the bot simply doesn't start (server still
+// works fine for the /sale endpoint on its own).
+const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID || '';
+
+if (BOT_TOKEN && CHANNEL_ID) {
+  const { Client, GatewayIntentBits } = require('discord.js');
+
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent
+    ]
+  });
+
+  // Matches lines like: "First Aid Bandage x1 ($100/unit)"
+  const ITEM_LINE_REGEX = /^(.+?)\s+x(\d+)\s+\(\$([\d.]+)\/unit\)/i;
+
+  client.on('messageCreate', (message) => {
+    if (message.channelId !== CHANNEL_ID) return;
+    if (!message.embeds || message.embeds.length === 0) return;
+
+    for (const embed of message.embeds) {
+      const itemsField = embed.fields?.find(f => f.name.toLowerCase() === 'items');
+      if (!itemsField) continue;
+
+      const lines = itemsField.value.split('\n');
+      for (const line of lines) {
+        const match = line.match(ITEM_LINE_REGEX);
+        if (!match) continue;
+
+        const itemName = match[1].trim();
+        const quantity = parseInt(match[2], 10);
+        const unitPrice = parseFloat(match[3]);
+        const totalPrice = quantity * unitPrice;
+
+        insertSale.run(itemName, totalPrice);
+        console.log(`Logged sale from Discord: ${itemName} x${quantity} = $${totalPrice.toFixed(2)}`);
+      }
+    }
+  });
+
+  client.once('ready', () => {
+    console.log(`Discord bot logged in as ${client.user.tag}, watching channel ${CHANNEL_ID}`);
+  });
+
+  client.login(BOT_TOKEN).catch(err => {
+    console.error('Discord bot failed to log in — check DISCORD_BOT_TOKEN:', err.message);
+  });
+} else {
+  console.log('Discord bot not started (DISCORD_BOT_TOKEN or DISCORD_CHANNEL_ID not set).');
+}
