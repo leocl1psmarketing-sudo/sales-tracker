@@ -294,7 +294,6 @@
     </div>
   </div>
 
-  <!-- DASHBOARD TAB -->
   <div id="dashboardView">
     <div class="stats-row">
       <div class="stat-card">
@@ -328,7 +327,6 @@
     </div>
   </div>
 
-  <!-- OWNER TAB -->
   <div id="ownerView" style="display:none;">
 
     <div id="ownerLoginBox" class="owner-card owner-login">
@@ -366,7 +364,7 @@
 let revenueChartInstance = null;
 let itemChartInstance = null;
 let ownerPassword = sessionStorage.getItem('ownerPassword') || null;
-
+const weekDataCache = {};
 
 function switchTab(tab) {
   document.getElementById('dashboardView').style.display = tab === 'dashboard' ? 'block' : 'none';
@@ -486,7 +484,7 @@ async function ownerLogin() {
       return;
     }
     ownerPassword = pw;
-    sessionStorage.setItem('ownerPassword', pw); // Save to session
+    sessionStorage.setItem('ownerPassword', pw);
     document.getElementById('ownerLoginBox').style.display = 'none';
     document.getElementById('ownerPanel').style.display = 'block';
     loadPastWeeks();
@@ -580,25 +578,62 @@ async function toggleWeekDetail(weekId) {
     return;
   }
 
-  if (!detailEl.dataset.loaded) {
+  if (!weekDataCache[weekId]) {
     const res = await fetch(`/api/weeks/${weekId}`, { headers: { 'x-owner-password': ownerPassword } });
     const week = await res.json();
-    const topSellers = week.stats.topSellers.slice().sort((a, b) => b.revenue - a.revenue).slice(0, 5);
-
-    detailEl.innerHTML = topSellers.map((s, i) => `
-      <div class="seller-row">
-        <div class="rank ${i === 0 ? 'gold' : ''}">${i + 1}</div>
-        <div class="seller-info">
-          <div class="seller-name">${s.item}</div>
-          <div class="seller-sub">${s.unitsSold} sold</div>
+    weekDataCache[weekId] = week.stats ? week.stats.topSellers || [] : [];
+    
+    detailEl.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;" onclick="event.stopPropagation()">
+        <span style="font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase;">Top Items</span>
+        <div class="tabs" style="gap: 6px;">
+          <button class="tab-btn active" id="filter-rev-${weekId}" onclick="renderWeekSellers(${weekId}, 'revenue')">Revenue ($)</button>
+          <button class="tab-btn" id="filter-qty-${weekId}" onclick="renderWeekSellers(${weekId}, 'units')">Units Sold</button>
         </div>
-        <div class="pill gold">$${s.revenue.toFixed(2)}</div>
       </div>
-    `).join('');
-    detailEl.dataset.loaded = 'true';
+      <div id="week-seller-list-${weekId}"></div>
+    `;
   }
 
+  renderWeekSellers(weekId, 'revenue');
   detailEl.classList.add('open');
+}
+
+function renderWeekSellers(weekId, sortBy) {
+  const listEl = document.getElementById(`week-seller-list-${weekId}`);
+  const btnRev = document.getElementById(`filter-rev-${weekId}`);
+  const btnQty = document.getElementById(`filter-qty-${weekId}`);
+
+  if (btnRev && btnQty) {
+    btnRev.classList.toggle('active', sortBy === 'revenue');
+    btnQty.classList.toggle('active', sortBy === 'units');
+  }
+
+  const items = (weekDataCache[weekId] || []).slice();
+
+  if (sortBy === 'units') {
+    items.sort((a, b) => b.unitsSold - a.unitsSold);
+  } else {
+    items.sort((a, b) => b.revenue - a.revenue);
+  }
+
+  const topSellers = items.slice(0, 5);
+
+  if (topSellers.length === 0) {
+    listEl.innerHTML = '<div class="empty">No seller data available for this week.</div>';
+    return;
+  }
+
+  listEl.innerHTML = topSellers.map((s, i) => `
+    <div class="seller-row" onclick="event.stopPropagation()">
+      <div class="rank ${i === 0 ? 'gold' : ''}">${i + 1}</div>
+      <div class="seller-info">
+        <div class="seller-name">${s.item}</div>
+        <div class="seller-sub">${s.unitsSold} sold</div>
+      </div>
+      <div class="pill gold">$${s.revenue.toFixed(2)}</div>
+    </div>
+  `).join('');
 }
 </script>
 </body>
