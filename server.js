@@ -181,16 +181,30 @@ if (BOT_TOKEN && CHANNEL_ID) {
 
   client.on('messageCreate', (message) => {
     if (message.channelId !== CHANNEL_ID) return;
-    if (!message.embeds || message.embeds.length === 0) return;
+
+    console.log(`[DEBUG] Message received in watched channel from "${message.author?.username}". Embeds: ${message.embeds.length}`);
+
+    if (!message.embeds || message.embeds.length === 0) {
+      console.log('[DEBUG] No embeds on this message — nothing to parse.');
+      return;
+    }
 
     for (const embed of message.embeds) {
+      console.log(`[DEBUG] Embed title: "${embed.title}", fields: ${embed.fields?.map(f => f.name).join(', ')}`);
+
       const itemsField = embed.fields?.find(f => f.name.toLowerCase() === 'items');
-      if (!itemsField) continue;
+      if (!itemsField) {
+        console.log('[DEBUG] No "Items" field found on this embed.');
+        continue;
+      }
 
       const lines = itemsField.value.split('\n');
       for (const line of lines) {
         const match = line.match(ITEM_LINE_REGEX);
-        if (!match) continue;
+        if (!match) {
+          console.log(`[DEBUG] Line did not match expected pattern: "${line}"`);
+          continue;
+        }
 
         const itemName = match[1].trim();
         const quantity = parseInt(match[2], 10);
