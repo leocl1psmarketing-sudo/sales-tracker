@@ -17,6 +17,7 @@
     --accent: #4f8ef7;
     --accent-light: #7db2ff;
     --accent-glow: rgba(79,142,247,0.45);
+    --gold: #ffcd6a;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -31,7 +32,6 @@
     position: relative;
     overflow-x: hidden;
   }
-  /* floating particle dots like the reference UI */
   body::before {
     content: '';
     position: fixed;
@@ -71,17 +71,33 @@
     font-size: 15px;
     color: #06101f;
     box-shadow: 0 0 24px var(--accent-glow);
+    flex-shrink: 0;
   }
-  .topbar h1 {
-    font-size: 17px;
-    font-weight: 700;
-    margin: 0;
-  }
+  .topbar h1 { font-size: 17px; font-weight: 700; margin: 0; }
   .topbar .sub {
     color: var(--muted);
     font-size: 11px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+  .tabs { display: flex; gap: 8px; }
+  .tab-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 9px 18px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .tab-btn:hover { color: var(--text); border-color: var(--border-strong); }
+  .tab-btn.active {
+    background: rgba(79,142,247,0.16);
+    border-color: rgba(79,142,247,0.45);
+    color: var(--accent-light);
+    box-shadow: 0 0 16px rgba(79,142,247,0.18);
   }
 
   .stats-row {
@@ -90,7 +106,7 @@
     gap: 14px;
     margin-bottom: 20px;
   }
-  .stat-card, .chart-card, .list-card {
+  .stat-card, .chart-card, .list-card, .owner-card {
     background: var(--glass);
     border: 1px solid var(--border);
     border-radius: 20px;
@@ -105,10 +121,7 @@
     text-transform: uppercase;
     margin-bottom: 8px;
   }
-  .stat-value {
-    font-size: 26px;
-    font-weight: 700;
-  }
+  .stat-value { font-size: 26px; font-weight: 700; }
 
   .charts-row {
     display: grid;
@@ -119,7 +132,7 @@
   @media (max-width: 850px) {
     .charts-row { grid-template-columns: 1fr; }
   }
-  .chart-card h2, .list-card h2 {
+  .chart-card h2, .list-card h2, .owner-card h2 {
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -154,7 +167,7 @@
     color: var(--accent-light);
     flex-shrink: 0;
   }
-  .rank.gold { background: rgba(255,200,90,0.15); border-color: rgba(255,200,90,0.45); color: #ffcd6a; }
+  .rank.gold { background: rgba(255,200,90,0.15); border-color: rgba(255,200,90,0.45); color: var(--gold); }
   .seller-info { flex: 1; min-width: 0; }
   .seller-name { font-weight: 600; font-size: 15px; margin-bottom: 2px; }
   .seller-sub { color: var(--muted); font-size: 12px; }
@@ -169,13 +182,101 @@
     white-space: nowrap;
     box-shadow: 0 0 16px rgba(79,142,247,0.15);
   }
-
-  .empty {
-    color: var(--muted);
-    text-align: center;
-    padding: 30px 0;
-    font-size: 13px;
+  .pill.gold {
+    background: rgba(255,200,90,0.14);
+    border-color: rgba(255,200,90,0.4);
+    color: var(--gold);
+    box-shadow: 0 0 16px rgba(255,200,90,0.15);
   }
+
+  .empty { color: var(--muted); text-align: center; padding: 30px 0; font-size: 13px; }
+
+  /* Owner tab */
+  .owner-login {
+    max-width: 380px;
+    margin: 60px auto;
+    text-align: center;
+  }
+  .owner-login h2 { margin-bottom: 6px; }
+  .owner-login p { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .owner-input {
+    width: 100%;
+    background: var(--glass-strong);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+  .owner-input:focus { outline: none; border-color: var(--accent); }
+  .btn {
+    background: linear-gradient(140deg, var(--accent-light), var(--accent));
+    color: #06101f;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    box-shadow: 0 0 20px var(--accent-glow);
+    width: 100%;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn.secondary {
+    background: var(--glass-strong);
+    color: var(--text);
+    box-shadow: none;
+    border: 1px solid var(--border);
+    width: auto;
+  }
+  .error-text { color: #ff6b6b; font-size: 12px; margin-top: 8px; }
+
+  .owner-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  .owner-header h2 { margin: 0; font-size: 18px; }
+  .end-week-btn {
+    background: linear-gradient(140deg, #ff8a7d, #ff6b6b);
+    color: #2a0a0a;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    box-shadow: 0 0 18px rgba(255,107,107,0.3);
+  }
+  .end-week-btn:hover { filter: brightness(1.08); }
+  .end-week-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .week-row {
+    background: var(--glass-strong);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 18px;
+    margin-bottom: 10px;
+    cursor: pointer;
+  }
+  .week-row:hover { border-color: var(--border-strong); }
+  .week-row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .week-dates { font-weight: 600; font-size: 14px; }
+  .week-sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .week-revenue { font-size: 18px; font-weight: 700; color: var(--accent-light); }
+  .week-detail {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    display: none;
+  }
+  .week-detail.open { display: block; }
 </style>
 </head>
 <body>
@@ -183,46 +284,98 @@
 
   <div class="topbar">
     <div class="logo">LC</div>
-    <div>
+    <div style="flex:1;">
       <h1>Business Sales Dashboard</h1>
       <div class="sub">Live Revenue Tracker</div>
     </div>
-  </div>
-
-  <div class="stats-row">
-    <div class="stat-card">
-      <div class="stat-label">Total Revenue</div>
-      <div class="stat-value" id="totalRevenue">$0.00</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Total Sales</div>
-      <div class="stat-value" id="totalSales">0</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Avg Sale Price</div>
-      <div class="stat-value" id="avgSale">$0.00</div>
+    <div class="tabs">
+      <button class="tab-btn active" id="tabDashboardBtn" onclick="switchTab('dashboard')">Dashboard</button>
+      <button class="tab-btn" id="tabOwnerBtn" onclick="switchTab('owner')">Owner</button>
     </div>
   </div>
 
-  <div class="list-card">
-    <h2>🔥 Top Sellers — Fastest Moving Stock</h2>
-    <div id="topSellersList"></div>
+  <!-- DASHBOARD TAB -->
+  <div id="dashboardView">
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Total Revenue</div>
+        <div class="stat-value" id="totalRevenue">$0.00</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Sales</div>
+        <div class="stat-value" id="totalSales">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg Sale Price</div>
+        <div class="stat-value" id="avgSale">$0.00</div>
+      </div>
+    </div>
+
+    <div class="list-card">
+      <h2>🔥 Top Sellers — Fastest Moving Stock</h2>
+      <div id="topSellersList"></div>
+    </div>
+
+    <div class="charts-row">
+      <div class="chart-card">
+        <h2>Revenue Over Time</h2>
+        <canvas id="revenueChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>Revenue By Item</h2>
+        <canvas id="itemChart"></canvas>
+      </div>
+    </div>
   </div>
 
-  <div class="charts-row">
-    <div class="chart-card">
-      <h2>Revenue Over Time</h2>
-      <canvas id="revenueChart"></canvas>
+  <!-- OWNER TAB -->
+  <div id="ownerView" style="display:none;">
+
+    <div id="ownerLoginBox" class="owner-card owner-login">
+      <h2>🔒 Owner Access</h2>
+      <p>Enter the owner password to manage weekly reports.</p>
+      <input type="password" id="ownerPasswordInput" class="owner-input" placeholder="Owner password" onkeydown="if(event.key==='Enter') ownerLogin()">
+      <button class="btn" onclick="ownerLogin()">Unlock</button>
+      <div id="ownerLoginError" class="error-text"></div>
     </div>
-    <div class="chart-card">
-      <h2>Revenue By Item</h2>
-      <canvas id="itemChart"></canvas>
+
+    <div id="ownerPanel" style="display:none;">
+      <div class="owner-card" style="margin-bottom:16px;">
+        <div class="owner-header">
+          <h2>This Week</h2>
+          <button class="end-week-btn" id="endWeekBtn" onclick="endWeek()">End This Week &amp; Save</button>
+        </div>
+        <p style="color:var(--muted); font-size:13px; margin:0;">
+          Ending the week snapshots current revenue, sales, and top sellers into permanent history below,
+          then resets the live dashboard to start tracking a fresh week.
+        </p>
+        <div id="endWeekMessage" style="margin-top:14px;"></div>
+      </div>
+
+      <div class="owner-card">
+        <h2>Past Weeks</h2>
+        <div id="pastWeeksList"><div class="empty">Loading...</div></div>
+      </div>
     </div>
+
   </div>
 
 </div>
 
 <script>
+let revenueChartInstance = null;
+let itemChartInstance = null;
+let ownerPassword = null;
+
+function switchTab(tab) {
+  document.getElementById('dashboardView').style.display = tab === 'dashboard' ? 'block' : 'none';
+  document.getElementById('ownerView').style.display = tab === 'owner' ? 'block' : 'none';
+  document.getElementById('tabDashboardBtn').classList.toggle('active', tab === 'dashboard');
+  document.getElementById('tabOwnerBtn').classList.toggle('active', tab === 'owner');
+  if (tab === 'owner' && ownerPassword) loadPastWeeks();
+}
+
+// ---- Dashboard (this week, live) ----
 async function loadDashboard() {
   const res = await fetch('/api/stats');
   const data = await res.json();
@@ -231,7 +384,6 @@ async function loadDashboard() {
   document.getElementById('totalSales').textContent = data.totalSales;
   document.getElementById('avgSale').textContent = '$' + (data.totalSales ? (data.totalRevenue / data.totalSales) : 0).toFixed(2);
 
-  // --- Top sellers list ---
   const listEl = document.getElementById('topSellersList');
   listEl.innerHTML = '';
   if (!data.topSellers || data.topSellers.length === 0) {
@@ -252,11 +404,11 @@ async function loadDashboard() {
     });
   }
 
-  // --- Charts ---
   const days = Object.keys(data.byDay).sort();
   const dayValues = days.map(d => data.byDay[d]);
 
-  new Chart(document.getElementById('revenueChart'), {
+  if (revenueChartInstance) revenueChartInstance.destroy();
+  revenueChartInstance = new Chart(document.getElementById('revenueChart'), {
     type: 'line',
     data: {
       labels: days,
@@ -282,7 +434,8 @@ async function loadDashboard() {
   const items = Object.keys(data.byItem);
   const itemValues = items.map(i => data.byItem[i]);
 
-  new Chart(document.getElementById('itemChart'), {
+  if (itemChartInstance) itemChartInstance.destroy();
+  itemChartInstance = new Chart(document.getElementById('itemChart'), {
     type: 'bar',
     data: {
       labels: items,
@@ -305,6 +458,136 @@ async function loadDashboard() {
 
 loadDashboard();
 setInterval(loadDashboard, 30000);
+
+// ---- Owner tab ----
+async function ownerLogin() {
+  const pw = document.getElementById('ownerPasswordInput').value;
+  const errEl = document.getElementById('ownerLoginError');
+  errEl.textContent = '';
+
+  try {
+    const res = await fetch('/api/owner-login', {
+      method: 'POST',
+      headers: { 'x-owner-password': pw }
+    });
+    if (!res.ok) {
+      errEl.textContent = 'Incorrect password.';
+      return;
+    }
+    ownerPassword = pw;
+    document.getElementById('ownerLoginBox').style.display = 'none';
+    document.getElementById('ownerPanel').style.display = 'block';
+    loadPastWeeks();
+  } catch (err) {
+    errEl.textContent = 'Could not reach server.';
+  }
+}
+
+async function endWeek() {
+  if (!confirm('End this week and save it to history? The live dashboard will reset to zero for the new week.')) return;
+
+  const btn = document.getElementById('endWeekBtn');
+  btn.disabled = true;
+  const msgEl = document.getElementById('endWeekMessage');
+  msgEl.innerHTML = '';
+
+  try {
+    const res = await fetch('/api/end-week', {
+      method: 'POST',
+      headers: { 'x-owner-password': ownerPassword }
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      msgEl.innerHTML = `<div class="error-text">${data.error || 'Something went wrong.'}</div>`;
+      return;
+    }
+
+    const s = data.summary;
+    msgEl.innerHTML = `
+      <div class="week-row">
+        <div class="week-row-top">
+          <div>
+            <div class="week-dates">Week saved successfully</div>
+            <div class="week-sub">${s.totalSales} sales &middot; Best seller: ${s.bestSeller ? s.bestSeller.item : 'N/A'}</div>
+          </div>
+          <div class="week-revenue">$${s.totalRevenue.toFixed(2)}</div>
+        </div>
+      </div>
+    `;
+    loadDashboard();
+    loadPastWeeks();
+  } catch (err) {
+    msgEl.innerHTML = '<div class="error-text">Could not reach server.</div>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadPastWeeks() {
+  const listEl = document.getElementById('pastWeeksList');
+  try {
+    const res = await fetch('/api/weeks', { headers: { 'x-owner-password': ownerPassword } });
+    const weeks = await res.json();
+
+    if (!weeks || weeks.length === 0) {
+      listEl.innerHTML = '<div class="empty">No past weeks saved yet. Click "End This Week" above once you\'re ready to archive the current week.</div>';
+      return;
+    }
+
+    listEl.innerHTML = '';
+    weeks.forEach(week => {
+      const row = document.createElement('div');
+      row.className = 'week-row';
+      const start = new Date(week.week_start + 'Z').toLocaleDateString();
+      const end = new Date(week.week_end + 'Z').toLocaleDateString();
+      row.innerHTML = `
+        <div class="week-row-top">
+          <div>
+            <div class="week-dates">${start} &rarr; ${end}</div>
+            <div class="week-sub">${week.total_sales} sales &middot; Best seller: ${week.best_seller_item || 'N/A'}</div>
+          </div>
+          <div class="week-revenue">$${week.total_revenue.toFixed(2)}</div>
+        </div>
+        <div class="week-detail" id="week-detail-${week.id}"></div>
+      `;
+      row.addEventListener('click', () => toggleWeekDetail(week.id));
+      listEl.appendChild(row);
+    });
+  } catch (err) {
+    listEl.innerHTML = '<div class="error-text">Could not load past weeks.</div>';
+  }
+}
+
+async function toggleWeekDetail(weekId) {
+  const detailEl = document.getElementById(`week-detail-${weekId}`);
+  const isOpen = detailEl.classList.contains('open');
+
+  if (isOpen) {
+    detailEl.classList.remove('open');
+    return;
+  }
+
+  if (!detailEl.dataset.loaded) {
+    const res = await fetch(`/api/weeks/${weekId}`, { headers: { 'x-owner-password': ownerPassword } });
+    const week = await res.json();
+    const topSellers = week.stats.topSellers.slice().sort((a, b) => b.revenue - a.revenue).slice(0, 5);
+
+    detailEl.innerHTML = topSellers.map((s, i) => `
+      <div class="seller-row">
+        <div class="rank ${i === 0 ? 'gold' : ''}">${i + 1}</div>
+        <div class="seller-info">
+          <div class="seller-name">${s.item}</div>
+          <div class="seller-sub">${s.unitsSold} sold</div>
+        </div>
+        <div class="pill gold">$${s.revenue.toFixed(2)}</div>
+      </div>
+    `).join('');
+    detailEl.dataset.loaded = 'true';
+  }
+
+  detailEl.classList.add('open');
+}
 </script>
 </body>
 </html>
