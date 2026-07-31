@@ -100,13 +100,13 @@ Put this in the same place your script currently fires the Discord webhook
 
 Just open `https://your-app.up.railway.app` in a browser any time. It shows:
 
-- Total revenue and total sales
-- Average sale price
+- Total revenue
+- **Total Sales** — the number of distinct transactions (checkouts), not
+  individual items. A kiosk purchase with 5 different items in one go still
+  counts as 1 sale.
+- Average sale price (revenue divided by number of transactions)
 - **Top Sellers** — a ranked leaderboard of which items are selling the
   fastest, based on units sold per day since each item's first recorded sale
-  (also shows how many hours pass between sales, on average, for that item)
-- A line chart of revenue per day
-- A bar chart of revenue per item
 
 The page auto-refreshes every 30 seconds. Theme is a dark glass UI with blue
 accents to match your existing crafting portal.
@@ -130,13 +130,51 @@ Click the **Owner** tab (top right of the dashboard) and enter your
   then resets the live dashboard to zero so you can start tracking the next
   week fresh. Past data is never deleted — just moved into the weekly
   history list.
+- **Top Items This Week** — a live preview of the current week's top
+  sellers, with a toggle to sort by **Revenue ($)** (what's making the most
+  money) or **Units Sold** (what's moving the most volume) — useful for
+  deciding what to restock before you end the week.
+- **📊 Week-over-Week Comparison** (dropdown) — a simple bar comparison of
+  this week's revenue vs the most recently ended week, plus % change on
+  revenue, sales, and units.
+- **⏰ Auto End Week Schedule** (dropdown) — optionally have the week end
+  itself automatically on a day/time you choose (e.g. every Sunday at
+  00:00 UTC), instead of needing to click the button manually. Runs even if
+  the server restarted recently — the schedule is checked every 5 minutes
+  against a stored "next run" time, not a timer that resets on redeploy.
+- **💲 Edit Item Prices** (dropdown) — same price editor as before, just
+  tucked into a collapsible section to save space.
 - **Past Weeks** — a list of every week you've ended, showing total revenue,
   total sales, and the best-selling item for that week. Click any week to
-  expand its top 5 sellers.
+  expand it, with the same Revenue/Units Sold sort toggle. Each row also has
+  a 🗑 button to **permanently delete** that week's saved history if you
+  want to clean up old data.
 
 The Owner tab uses your `OWNER_PASSWORD` (separate from `API_KEY`, which is
 only for the FiveM/bot sale-logging endpoint). Only share the owner password
 with people who should be able to close out weeks and view revenue history.
+
+## Data Durability — what happens if the server crashes
+
+A few things work together so you don't lose data:
+
+1. **Every sale is written to disk the instant it's recorded.** The
+   database (`better-sqlite3`) runs in WAL mode with full synchronous
+   writes, which is the durability setting SQLite recommends — a crash
+   right after a sale is logged doesn't lose that sale.
+2. **Ending a week is one atomic operation.** Saving the week's history and
+   marking its sales as archived happen together in a single database
+   transaction — if the server crashes mid-way, neither happens (rather
+   than ending up half-done), so a retry is always safe.
+3. **The Railway Volume is what actually makes this permanent.** WAL mode
+   protects against app-level crashes, but if you haven't attached a Volume
+   (see step 6 above) and set `DB_PATH`, the whole database still gets
+   wiped on redeploy — this is the single most important thing to have set
+   up correctly for real data safety.
+4. **Auto-end-week survives restarts.** The schedule is stored as a
+   timestamp in the database, not a timer — so even if Railway restarts the
+   server between checks, it'll still catch a missed scheduled end-week
+   the next time it checks (every 5 minutes).
 
 ## Local testing (optional)
 
