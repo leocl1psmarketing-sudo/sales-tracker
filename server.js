@@ -192,14 +192,15 @@ if (BOT_TOKEN && CHANNEL_ID) {
     for (const embed of message.embeds) {
       console.log(`[DEBUG] Embed title: "${embed.title}", fields: ${embed.fields?.map(f => f.name).join(', ')}`);
 
-      const itemsField = embed.fields?.find(f => f.name.toLowerCase() === 'items');
+      const itemsField = embed.fields?.find(f => f.name.replace(/\*/g, '').trim().toLowerCase() === 'items');
       if (!itemsField) {
         console.log('[DEBUG] No "Items" field found on this embed.');
         continue;
       }
 
       const lines = itemsField.value.split('\n');
-      for (const line of lines) {
+      for (const rawLine of lines) {
+        const line = rawLine.replace(/[`*]/g, '').trim();
         const match = line.match(ITEM_LINE_REGEX);
         if (!match) {
           console.log(`[DEBUG] Line did not match expected pattern: "${line}"`);
