@@ -77,6 +77,51 @@ if (!archiveColumns.includes('total_orders')) {
   db.exec('ALTER TABLE weekly_archives ADD COLUMN total_orders INTEGER NOT NULL DEFAULT 0');
 }
 
+// ---- ITEM CATALOG ----
+// Stores each kiosk item's display emoji and reference price (price here is
+// just a label shown on the Items tab — it isn't used in any sales math).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS item_catalog (
+    name TEXT PRIMARY KEY,
+    emoji TEXT NOT NULL DEFAULT '📦',
+    price REAL NOT NULL DEFAULT 0
+  )
+`);
+
+const DEFAULT_CATALOG = [
+  { name: 'Jerry Can', emoji: '🛢️', price: 100 },
+  { name: 'Two Stroke', emoji: '⛽', price: 75 },
+  { name: 'Water', emoji: '💧', price: 5 },
+  { name: 'Baggies (Empty)', emoji: '🛍️', price: 35 },
+  { name: 'Coffee (Small)', emoji: '☕', price: 40 },
+  { name: 'First Aid Bandage', emoji: '🩹', price: 100 },
+  { name: 'Frost Rush', emoji: '🥤', price: 80 },
+  { name: 'Lucky Scratch', emoji: '🎟️', price: 500 },
+  { name: 'Flaming Crunch', emoji: '🌶️', price: 75 },
+  { name: 'Repair Kit (Sml)', emoji: '🧰', price: 300 },
+  { name: 'Rolling Paper', emoji: '🚬', price: 5 },
+  { name: 'Lighter', emoji: '🔥', price: 20 },
+  { name: 'Small Vape', emoji: '💨', price: 300 },
+  { name: 'Sandwich', emoji: '🥪', price: 5 },
+  { name: 'Large Vape', emoji: '💨', price: 600 },
+  { name: 'Doughnut (Choc)', emoji: '🍩', price: 30 },
+  { name: 'Cigar', emoji: '🚬', price: 20 },
+  { name: 'Cola', emoji: '🥤', price: 5 },
+  { name: 'Cigarette', emoji: '🚬', price: 10 }
+];
+
+const catalogCount = db.prepare('SELECT COUNT(*) as count FROM item_catalog').get().count;
+if (catalogCount === 0) {
+  const insertCatalogItem = db.prepare('INSERT INTO item_catalog (name, emoji, price) VALUES (?, ?, ?)');
+  const insertAll = db.transaction((items) => {
+    for (const item of items) insertCatalogItem.run(item.name, item.emoji, item.price);
+  });
+  insertAll(DEFAULT_CATALOG);
+}
+
+const getCatalog = db.prepare('SELECT * FROM item_catalog ORDER BY name ASC');
+const updateCatalogPrice = db.prepare('UPDATE item_catalog SET price = ? WHERE name = ?');
+
 const insertSale = db.prepare('INSERT INTO sales (item, price, order_id) VALUES (?, ?, ?)');
 const getCurrentSales = db.prepare('SELECT * FROM sales WHERE archived_week_id IS NULL ORDER BY created_at ASC');
 const archiveCurrentSales = db.prepare('UPDATE sales SET archived_week_id = ? WHERE archived_week_id IS NULL');
@@ -212,6 +257,30 @@ app.get('/api/sales', (req, res) => {
 app.get('/api/stats', (req, res) => {
   const sales = getCurrentSales.all();
   res.json(calcStats(sales, true));
+});
+
+// Returns the item catalog (name, emoji, price) for the Items tab
+app.get('/api/catalog', (req, res) => {
+  res.json(getCatalog.all());
+});
+
+// Owner-only: update one or more item prices. Body: { prices: { "Cola": 6, "Water": 4 } }
+app.post('/api/catalog/prices', requireOwner, (req, res) => {
+  const { prices } = req.body;
+  if (!prices || typeof prices !== 'object') {
+    return res.status(400).json({ error: 'Expected { prices: { "Item Name": number, ... } }' });
+  }
+
+  const updateAll = db.transaction((entries) => {
+    for (const [name, price] of entries) {
+      if (typeof price === 'number' && price >= 0) {
+        updateCatalogPrice.run(price, name);
+      }
+    }
+  });
+  updateAll(Object.entries(prices));
+
+  res.json({ success: true, catalog: getCatalog.all() });
 });
 
 // ---- OWNER ROUTES ----
