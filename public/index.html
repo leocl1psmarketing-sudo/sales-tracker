@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Business Sales Dashboard</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <style>
   :root {
     --bg: #08090d;
@@ -314,17 +313,6 @@
       <h2>🔥 Top Sellers — Fastest Moving Stock</h2>
       <div id="topSellersList"></div>
     </div>
-
-    <div class="charts-row">
-      <div class="chart-card">
-        <h2>Revenue Over Time</h2>
-        <canvas id="revenueChart"></canvas>
-      </div>
-      <div class="chart-card">
-        <h2>Revenue By Item</h2>
-        <canvas id="itemChart"></canvas>
-      </div>
-    </div>
   </div>
 
   <div id="ownerView" style="display:none;">
@@ -348,6 +336,17 @@
           then resets the live dashboard to start tracking a fresh week.
         </p>
         <div id="endWeekMessage" style="margin-top:14px;"></div>
+
+        <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <span style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em;">Top Items This Week</span>
+            <div class="tabs" style="gap:6px;">
+              <button class="tab-btn active" id="filter-rev-current" onclick="renderCurrentWeekSellers('revenue')">Revenue ($)</button>
+              <button class="tab-btn" id="filter-qty-current" onclick="renderCurrentWeekSellers('units')">Units Sold</button>
+            </div>
+          </div>
+          <div id="current-week-seller-list"><div class="empty">No sales yet this week.</div></div>
+        </div>
       </div>
 
       <div class="owner-card">
@@ -361,10 +360,9 @@
 </div>
 
 <script>
-let revenueChartInstance = null;
-let itemChartInstance = null;
 let ownerPassword = sessionStorage.getItem('ownerPassword') || null;
 const weekDataCache = {};
+let currentWeekTopSellers = [];
 
 function switchTab(tab) {
   document.getElementById('dashboardView').style.display = tab === 'dashboard' ? 'block' : 'none';
@@ -377,6 +375,7 @@ function switchTab(tab) {
       document.getElementById('ownerLoginBox').style.display = 'none';
       document.getElementById('ownerPanel').style.display = 'block';
       loadPastWeeks();
+      renderCurrentWeekSellers('revenue');
     } else {
       document.getElementById('ownerLoginBox').style.display = 'block';
       document.getElementById('ownerPanel').style.display = 'none';
@@ -390,8 +389,8 @@ async function loadDashboard() {
   const data = await res.json();
 
   document.getElementById('totalRevenue').textContent = '$' + data.totalRevenue.toFixed(2);
-  document.getElementById('totalSales').textContent = data.totalSales;
-  document.getElementById('avgSale').textContent = '$' + (data.totalSales ? (data.totalRevenue / data.totalSales) : 0).toFixed(2);
+  document.getElementById('totalSales').textContent = data.totalOrders;
+  document.getElementById('avgSale').textContent = '$' + (data.totalOrders ? (data.totalRevenue / data.totalOrders) : 0).toFixed(2);
 
   const listEl = document.getElementById('topSellersList');
   listEl.innerHTML = '';
@@ -407,62 +406,18 @@ async function loadDashboard() {
           <div class="seller-name">${seller.item}</div>
           <div class="seller-sub">${seller.unitsSold} sold &middot; $${seller.revenue.toFixed(2)} revenue &middot; every ${seller.avgHoursBetweenSales}h</div>
         </div>
-        <div class="pill">${seller.velocityPerDay}/day</div>
       `;
       listEl.appendChild(row);
     });
   }
 
-  const days = Object.keys(data.byDay).sort();
-  const dayValues = days.map(d => data.byDay[d]);
-
-  if (revenueChartInstance) revenueChartInstance.destroy();
-  revenueChartInstance = new Chart(document.getElementById('revenueChart'), {
-    type: 'line',
-    data: {
-      labels: days,
-      datasets: [{
-        label: 'Revenue ($)',
-        data: dayValues,
-        borderColor: '#4f8ef7',
-        backgroundColor: 'rgba(79,142,247,0.15)',
-        pointBackgroundColor: '#7db2ff',
-        tension: 0.35,
-        fill: true
-      }]
-    },
-    options: {
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: '#83889c' }, grid: { color: 'rgba(255,255,255,0.06)' } },
-        y: { ticks: { color: '#83889c' }, grid: { color: 'rgba(255,255,255,0.06)' } }
-      }
-    }
-  });
-
-  const items = Object.keys(data.byItem);
-  const itemValues = items.map(i => data.byItem[i]);
-
-  if (itemChartInstance) itemChartInstance.destroy();
-  itemChartInstance = new Chart(document.getElementById('itemChart'), {
-    type: 'bar',
-    data: {
-      labels: items,
-      datasets: [{
-        label: 'Revenue ($)',
-        data: itemValues,
-        backgroundColor: '#4f8ef7',
-        borderRadius: 6
-      }]
-    },
-    options: {
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: '#83889c' }, grid: { color: 'rgba(255,255,255,0.06)' } },
-        y: { ticks: { color: '#83889c' }, grid: { color: 'rgba(255,255,255,0.06)' } }
-      }
-    }
-  });
+  // Keep the Owner tab's "This Week" preview in sync with live data
+  currentWeekTopSellers = data.topSellers || [];
+  const currentListEl = document.getElementById('current-week-seller-list');
+  if (currentListEl) {
+    const activeSort = document.getElementById('filter-qty-current')?.classList.contains('active') ? 'units' : 'revenue';
+    renderCurrentWeekSellers(activeSort);
+  }
 }
 
 loadDashboard();
@@ -519,7 +474,7 @@ async function endWeek() {
         <div class="week-row-top">
           <div>
             <div class="week-dates">Week saved successfully</div>
-            <div class="week-sub">${s.totalSales} sales &middot; Best seller: ${s.bestSeller ? s.bestSeller.item : 'N/A'}</div>
+            <div class="week-sub">${s.totalOrders} sales &middot; Best seller: ${s.bestSeller ? s.bestSeller.item : 'N/A'}</div>
           </div>
           <div class="week-revenue">$${s.totalRevenue.toFixed(2)}</div>
         </div>
@@ -555,7 +510,7 @@ async function loadPastWeeks() {
         <div class="week-row-top">
           <div>
             <div class="week-dates">${start} &rarr; ${end}</div>
-            <div class="week-sub">${week.total_sales} sales &middot; Best seller: ${week.best_seller_item || 'N/A'}</div>
+            <div class="week-sub">${week.total_orders} sales &middot; Best seller: ${week.best_seller_item || 'N/A'}</div>
           </div>
           <div class="week-revenue">$${week.total_revenue.toFixed(2)}</div>
         </div>
@@ -567,6 +522,43 @@ async function loadPastWeeks() {
   } catch (err) {
     listEl.innerHTML = '<div class="error-text">Could not load past weeks.</div>';
   }
+}
+
+function renderCurrentWeekSellers(sortBy) {
+  const listEl = document.getElementById('current-week-seller-list');
+  const btnRev = document.getElementById('filter-rev-current');
+  const btnQty = document.getElementById('filter-qty-current');
+  if (!listEl) return;
+
+  if (btnRev && btnQty) {
+    btnRev.classList.toggle('active', sortBy === 'revenue');
+    btnQty.classList.toggle('active', sortBy === 'units');
+  }
+
+  const items = currentWeekTopSellers.slice();
+  if (sortBy === 'units') {
+    items.sort((a, b) => b.unitsSold - a.unitsSold);
+  } else {
+    items.sort((a, b) => b.revenue - a.revenue);
+  }
+
+  const top = items.slice(0, 5);
+
+  if (top.length === 0) {
+    listEl.innerHTML = '<div class="empty">No sales yet this week.</div>';
+    return;
+  }
+
+  listEl.innerHTML = top.map((s, i) => `
+    <div class="seller-row">
+      <div class="rank ${i === 0 ? 'gold' : ''}">${i + 1}</div>
+      <div class="seller-info">
+        <div class="seller-name">${s.item}</div>
+        <div class="seller-sub">${s.unitsSold} sold</div>
+      </div>
+      <div class="pill gold">$${s.revenue.toFixed(2)}</div>
+    </div>
+  `).join('');
 }
 
 async function toggleWeekDetail(weekId) {
