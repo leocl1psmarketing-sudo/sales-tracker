@@ -365,14 +365,25 @@
 <script>
 let revenueChartInstance = null;
 let itemChartInstance = null;
-let ownerPassword = null;
+let ownerPassword = sessionStorage.getItem('ownerPassword') || null;
+
 
 function switchTab(tab) {
   document.getElementById('dashboardView').style.display = tab === 'dashboard' ? 'block' : 'none';
   document.getElementById('ownerView').style.display = tab === 'owner' ? 'block' : 'none';
   document.getElementById('tabDashboardBtn').classList.toggle('active', tab === 'dashboard');
   document.getElementById('tabOwnerBtn').classList.toggle('active', tab === 'owner');
-  if (tab === 'owner' && ownerPassword) loadPastWeeks();
+  
+  if (tab === 'owner') {
+    if (ownerPassword) {
+      document.getElementById('ownerLoginBox').style.display = 'none';
+      document.getElementById('ownerPanel').style.display = 'block';
+      loadPastWeeks();
+    } else {
+      document.getElementById('ownerLoginBox').style.display = 'block';
+      document.getElementById('ownerPanel').style.display = 'none';
+    }
+  }
 }
 
 // ---- Dashboard (this week, live) ----
@@ -475,6 +486,7 @@ async function ownerLogin() {
       return;
     }
     ownerPassword = pw;
+    sessionStorage.setItem('ownerPassword', pw); // Save to session
     document.getElementById('ownerLoginBox').style.display = 'none';
     document.getElementById('ownerPanel').style.display = 'block';
     loadPastWeeks();
