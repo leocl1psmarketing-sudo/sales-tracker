@@ -33,6 +33,12 @@ if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 const db = new Database(path.join(dbDir, 'sales.db'));
+
+// WAL mode: safer against crashes than SQLite's default rollback journal,
+// and lets reads happen while a write is in progress. Recommended by
+// better-sqlite3 for any real usage.
+db.pragma('journal_mode = WAL');
+db.pragma('synchronous = FULL');
 db.exec(`
   CREATE TABLE IF NOT EXISTS sales (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,6 +128,21 @@ if (catalogCount === 0) {
 const getCatalog = db.prepare('SELECT * FROM item_catalog ORDER BY name ASC');
 const updateCatalogPrice = db.prepare('UPDATE item_catalog SET price = ? WHERE name = ?');
 
+// ---- SETTINGS (key/value store for auto-end-week schedule) ----
+db.exec(`
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )
+`);
+const getSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
+const setSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+
+function getSettingValue(key, fallback = null) {
+  const row = getSetting.get(key);
+  return row ? row.value : fallback;
+}
+
 const insertSale = db.prepare('INSERT INTO sales (item, price, order_id) VALUES (?, ?, ?)');
 const getCurrentSales = db.prepare('SELECT * FROM sales WHERE archived_week_id IS NULL ORDER BY created_at ASC');
 const archiveCurrentSales = db.prepare('UPDATE sales SET archived_week_id = ? WHERE archived_week_id IS NULL');
@@ -131,6 +152,9 @@ const insertWeeklyArchive = db.prepare(`
 `);
 const getAllWeeklyArchives = db.prepare('SELECT id, week_start, week_end, total_revenue, total_sales, total_orders, best_seller_item, best_seller_revenue FROM weekly_archives ORDER BY week_end DESC');
 const getWeeklyArchiveById = db.prepare('SELECT * FROM weekly_archives WHERE id = ?');
+const getMostRecentArchive = db.prepare('SELECT * FROM weekly_archives ORDER BY week_end DESC LIMIT 1');
+const deleteWeeklyArchive = db.prepare('DELETE FROM weekly_archives WHERE id = ?');
+const deleteSalesForWeek = db.prepare('DELETE FROM sales WHERE archived_week_id = ?');
 
 // Computes the same shape of stats used by the dashboard (revenue by day,
 // by item, and top sellers by sell-through velocity) from any array of
@@ -191,7 +215,107 @@ function calcStats(sales, isCurrent = true) {
   return { totalRevenue, totalUnits, totalOrders, byDay, byItem, topSellers };
 }
 
-// Simple owner auth check — pass the password as an x-owner-password header
+// Core "end the week" logic, wrapped in a single atomic transaction so a
+// crash mid-way can't leave the archive saved but the sales un-archived
+// (or vice versa) — either the whole thing happens, or none of it does.
+// Used by both the manual "End This Week" button and the auto-scheduler.
+function endWeekNow() {
+  const sales = getCurrentSales.all();
+
+  if (sales.length === 0) {
+    return { error: 'No sales recorded yet this week — nothing to archive.' };
+  }
+
+  const stats = calcStats(sales, false);
+  const weekStart = sales[0].created_at;
+  const weekEnd = sales[sales.length - 1].created_at;
+  const bestSeller = stats.topSellers.slice().sort((a, b) => b.revenue - a.revenue)[0] || null;
+
+  const runAtomically = db.transaction(() => {
+    const result = insertWeeklyArchive.run(
+      weekStart,
+      weekEnd,
+      stats.totalRevenue,
+      stats.totalUnits,
+      stats.totalOrders,
+      bestSeller ? bestSeller.item : null,
+      bestSeller ? bestSeller.revenue : null,
+      JSON.stringify(stats)
+    );
+    archiveCurrentSales.run(result.lastInsertRowid);
+    return result.lastInsertRowid;
+  });
+
+  const weekId = runAtomically();
+
+  return {
+    weekId,
+    summary: {
+      weekStart,
+      weekEnd,
+      totalRevenue: stats.totalRevenue,
+      totalUnits: stats.totalUnits,
+      totalOrders: stats.totalOrders,
+      bestSeller
+    }
+  };
+}
+
+// ---- AUTO END WEEK SCHEDULER ----
+// Settings stored: auto_end_enabled ('true'/'false'), auto_end_day (0-6,
+// 0=Sunday), auto_end_hour (0-23, UTC), auto_end_next_at (ISO timestamp).
+function computeNextOccurrence(day, hour, fromDate) {
+  const next = new Date(fromDate);
+  next.setUTCHours(hour, 0, 0, 0);
+  let diff = (day - next.getUTCDay() + 7) % 7;
+  if (diff === 0 && next <= fromDate) diff = 7; // already passed today, push a week
+  next.setUTCDate(next.getUTCDate() + diff);
+  return next;
+}
+
+function saveSchedule(enabled, day, hour) {
+  setSetting.run('auto_end_enabled', enabled ? 'true' : 'false');
+  setSetting.run('auto_end_day', String(day));
+  setSetting.run('auto_end_hour', String(hour));
+  if (enabled) {
+    const next = computeNextOccurrence(day, hour, new Date());
+    setSetting.run('auto_end_next_at', next.toISOString());
+  }
+}
+
+function checkScheduler() {
+  try {
+    const enabled = getSettingValue('auto_end_enabled', 'false') === 'true';
+    if (!enabled) return;
+
+    const nextAt = getSettingValue('auto_end_next_at', null);
+    if (!nextAt) return;
+
+    const now = new Date();
+    if (now >= new Date(nextAt)) {
+      console.log('[Scheduler] Auto-ending the week now...');
+      const result = endWeekNow();
+      if (result.error) {
+        console.log(`[Scheduler] Skipped: ${result.error}`);
+      } else {
+        console.log(`[Scheduler] Week ended automatically. Revenue: $${result.summary.totalRevenue.toFixed(2)}`);
+      }
+
+      const day = parseInt(getSettingValue('auto_end_day', '0'), 10);
+      const hour = parseInt(getSettingValue('auto_end_hour', '0'), 10);
+      const next = computeNextOccurrence(day, hour, new Date());
+      setSetting.run('auto_end_next_at', next.toISOString());
+    }
+  } catch (err) {
+    // Never let a scheduler error take down the whole server
+    console.error('[Scheduler] Error during scheduled check:', err.message);
+  }
+}
+
+// Check every 5 minutes. Also runs once on startup in case the schedule
+// was due while the server was redeploying/restarting.
+setInterval(checkScheduler, 5 * 60 * 1000);
+setTimeout(checkScheduler, 10 * 1000);
 function requireOwner(req, res, next) {
   const pw = req.header('x-owner-password');
   if (pw !== OWNER_PASSWORD) {
@@ -293,43 +417,11 @@ app.post('/api/owner-login', requireOwner, (req, res) => {
 // Ends the current week: snapshots stats into permanent history, then
 // marks all current sales as archived so the live dashboard resets to zero.
 app.post('/api/end-week', requireOwner, (req, res) => {
-  const sales = getCurrentSales.all();
-
-  if (sales.length === 0) {
-    return res.status(400).json({ error: 'No sales recorded yet this week — nothing to archive.' });
+  const result = endWeekNow();
+  if (result.error) {
+    return res.status(400).json({ error: result.error });
   }
-
-  const stats = calcStats(sales, false);
-  const weekStart = sales[0].created_at;
-  const weekEnd = sales[sales.length - 1].created_at;
-
-  const bestSeller = stats.topSellers.slice().sort((a, b) => b.revenue - a.revenue)[0] || null;
-
-  const result = insertWeeklyArchive.run(
-    weekStart,
-    weekEnd,
-    stats.totalRevenue,
-    stats.totalUnits,
-    stats.totalOrders,
-    bestSeller ? bestSeller.item : null,
-    bestSeller ? bestSeller.revenue : null,
-    JSON.stringify(stats)
-  );
-
-  archiveCurrentSales.run(result.lastInsertRowid);
-
-  res.json({
-    success: true,
-    weekId: result.lastInsertRowid,
-    summary: {
-      weekStart,
-      weekEnd,
-      totalRevenue: stats.totalRevenue,
-      totalUnits: stats.totalUnits,
-      totalOrders: stats.totalOrders,
-      bestSeller
-    }
-  });
+  res.json({ success: true, weekId: result.weekId, summary: result.summary });
 });
 
 // Lists all past archived weeks (summary only)
@@ -347,6 +439,111 @@ app.get('/api/weeks/:id', requireOwner, (req, res) => {
     ...week,
     stats: JSON.parse(week.stats_json)
   });
+});
+
+// Get current auto-end-week schedule settings
+app.get('/api/schedule', requireOwner, (req, res) => {
+  res.json({
+    enabled: getSettingValue('auto_end_enabled', 'false') === 'true',
+    day: parseInt(getSettingValue('auto_end_day', '0'), 10),
+    hour: parseInt(getSettingValue('auto_end_hour', '0'), 10),
+    nextAt: getSettingValue('auto_end_next_at', null)
+  });
+});
+
+// Save auto-end-week schedule settings. Body: { enabled, day (0-6), hour (0-23) }
+app.post('/api/schedule', requireOwner, (req, res) => {
+  const { enabled, day, hour } = req.body;
+  if (typeof enabled !== 'boolean' || typeof day !== 'number' || typeof hour !== 'number') {
+    return res.status(400).json({ error: 'Expected { enabled: boolean, day: 0-6, hour: 0-23 }' });
+  }
+  if (day < 0 || day > 6 || hour < 0 || hour > 23) {
+    return res.status(400).json({ error: 'day must be 0-6, hour must be 0-23' });
+  }
+
+  saveSchedule(enabled, day, hour);
+  res.json({
+    success: true,
+    enabled,
+    day,
+    hour,
+    nextAt: getSettingValue('auto_end_next_at', null)
+  });
+});
+
+// Week-over-week comparison: current (in-progress) week vs the most
+// recently ended week
+app.get('/api/comparison', requireOwner, (req, res) => {
+  const currentStats = calcStats(getCurrentSales.all(), true);
+  const lastWeek = getMostRecentArchive.get();
+
+  const pctChange = (current, previous) => {
+    if (!previous || previous === 0) return null;
+    return Math.round(((current - previous) / previous) * 1000) / 10;
+  };
+
+  res.json({
+    current: {
+      totalRevenue: currentStats.totalRevenue,
+      totalOrders: currentStats.totalOrders,
+      totalUnits: currentStats.totalUnits
+    },
+    lastWeek: lastWeek ? {
+      totalRevenue: lastWeek.total_revenue,
+      totalOrders: lastWeek.total_orders,
+      totalUnits: lastWeek.total_sales,
+      weekEnd: lastWeek.week_end
+    } : null,
+    change: lastWeek ? {
+      revenue: pctChange(currentStats.totalRevenue, lastWeek.total_revenue),
+      orders: pctChange(currentStats.totalOrders, lastWeek.total_orders),
+      units: pctChange(currentStats.totalUnits, lastWeek.total_sales)
+    } : null
+  });
+});
+
+// Delete a past week's history permanently, along with its archived sales
+app.delete('/api/weeks/:id', requireOwner, (req, res) => {
+  const week = getWeeklyArchiveById.get(req.params.id);
+  if (!week) {
+    return res.status(404).json({ error: 'Week not found' });
+  }
+
+  const deleteAtomically = db.transaction(() => {
+    deleteSalesForWeek.run(req.params.id);
+    deleteWeeklyArchive.run(req.params.id);
+  });
+  deleteAtomically();
+
+  res.json({ success: true });
+});
+
+// ---- GRACEFUL SHUTDOWN ----
+// Railway sends SIGTERM before restarting/redeploying. Closing the database
+// cleanly here flushes any pending WAL data to the main file. Combined with
+// WAL mode above, this means: (1) every individual sale is already durably
+// written to disk the moment it's inserted — a crash doesn't lose sales
+// that already happened — and (2) this handler makes normal
+// restarts/redeploys clean on top of that.
+function shutdown() {
+  console.log('Shutting down — closing database...');
+  try {
+    db.close();
+  } catch (err) {
+    console.error('Error closing database:', err.message);
+  }
+  process.exit(0);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+// Log unexpected errors without silently losing them (Railway captures
+// console output in the Deploy Logs)
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err);
 });
 
 const PORT = process.env.PORT || 3000;
