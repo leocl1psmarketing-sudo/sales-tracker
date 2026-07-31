@@ -312,10 +312,13 @@ if (BOT_TOKEN && CHANNEL_ID) {
         const itemName = match[1].trim();
         const quantity = parseInt(match[2], 10);
         const unitPrice = parseFloat(match[3]);
-        const totalPrice = quantity * unitPrice;
 
-        insertSale.run(itemName, totalPrice);
-        console.log(`Logged sale from Discord: ${itemName} x${quantity} = $${totalPrice.toFixed(2)}`);
+// Loop through and insert each unit individually at its unit price
+        for (let i = 0; i < quantity; i++) {
+  insertSale.run(itemName, unitPrice);
+}
+
+console.log(`Logged sale from Discord: ${itemName} x${quantity} @ $${unitPrice.toFixed(2)}/unit (Total: $${(quantity * unitPrice).toFixed(2)})`);
       }
     }
   });
